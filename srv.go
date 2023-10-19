@@ -9,10 +9,16 @@ See `readme.md` for examples and additional details.
 package srv
 
 import (
+	"archive/zip"
+	"io"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
+	"strings"
+)
+
+const (
+	ZIP_EXT = `.zip`
 )
 
 /*
@@ -43,25 +49,41 @@ func (self FileServer) ServeHTTP(rew http.ResponseWriter, req *http.Request) {
 	dir := string(self)
 	reqPath := req.URL.Path
 	filePath := fpj(dir, reqPath)
+	zipFile, inZipFile := splitFilePathWithExt(filePath, ZIP_EXT)
 
 	/**
 	Ends with slash? Return error 404 for hygiene. Directory links must not end
 	with a slash. It's unnecessary, and GH Pages will do a 301 redirect to a
 	non-slash URL, which is a good feature but adds latency.
 	*/
-	if len(reqPath) > 1 && reqPath[len(reqPath)-1] == '/' {
-		goto notFound
-	}
+	// if len(reqPath) > 1 && reqPath[len(reqPath)-1] == '/' {
+	// 	goto notFound
+	// }
 
 	if fileExists(filePath) {
 		http.ServeFile(rew, req, filePath)
 		return
 	}
 
-	// Has extension? Don't bother looking for +".html" or +"/index.html".
-	if path.Ext(reqPath) != "" {
-		goto notFound
+	if fileExists(zipFile) {
+		zipFile, _ := zip.OpenReader(zipFile)
+		defer zipFile.Close()
+
+		for _, file := range zipFile.File {
+			if file.Name == inZipFile {
+				file, _ := file.Open()
+				io.Copy(rew, file)
+				return
+			}
+		}
+
+		// goto notFound
 	}
+
+	// Has extension? Don't bother looking for +".html" or +"/index.html".
+	// if path.Ext(reqPath) != "" {
+	// 	goto notFound
+	// }
 
 	// Try +".html".
 	{
@@ -81,7 +103,7 @@ func (self FileServer) ServeHTTP(rew http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-notFound:
+	// notFound:
 	// Minor issue: sends code 200 instead of 404 if "404.html" is found; not
 	// worth fixing for local development.
 	http.ServeFile(rew, req, fpj(dir, "404.html"))
@@ -92,4 +114,16 @@ func fpj(path ...string) string { return filepath.Join(path...) }
 func fileExists(filePath string) bool {
 	stat, _ := os.Stat(filePath)
 	return stat != nil && !stat.IsDir()
+}
+
+func splitFilePathWithExt(val string, ext string) (arch string, file string) {
+	vals := strings.Split(val, string(os.PathSeparator))
+	for ind, name := range vals {
+		if filepath.Ext(name) == ext {
+			arch = filepath.Join(vals[:ind+1]...)
+			file = filepath.Join(vals[ind+1:]...)
+			break
+		}
+	}
+	return
 }

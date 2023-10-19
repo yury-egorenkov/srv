@@ -22,6 +22,7 @@ Usage:
 	srv -d <dir>
 	srv -p <port>
 	srv -h <host>
+	srv -c
 
 Settings:
 
