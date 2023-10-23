@@ -23,6 +23,7 @@ Usage:
 	srv -p <port>
 	srv -h <host>
 	srv -c
+	srv -zip
 
 Settings:
 

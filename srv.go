@@ -10,9 +10,13 @@ package srv
 
 import (
 	"archive/zip"
+	"errors"
 	"io"
+	"io/fs"
+	"mime"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -66,24 +70,30 @@ func (self FileServer) ServeHTTP(rew http.ResponseWriter, req *http.Request) {
 	}
 
 	if fileExists(zipFile) {
-		zipFile, _ := zip.OpenReader(zipFile)
-		defer zipFile.Close()
-
-		for _, file := range zipFile.File {
-			if file.Name == inZipFile {
-				file, _ := file.Open()
-				io.Copy(rew, file)
-				return
-			}
+		zipReader, err := zip.OpenReader(zipFile)
+		if err != nil {
+			panic(err)
 		}
+		defer zipReader.Close()
 
-		// goto notFound
+		req.URL.Path = inZipFile
+
+		file, err := zipReader.Open(inZipFile)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				goto notFound
+			}
+			panic(err)
+		}
+		rew.Header().Set(`Content-Type`, mime.TypeByExtension(filepath.Ext(inZipFile)))
+		io.Copy(rew, file)
+		return
 	}
 
 	// Has extension? Don't bother looking for +".html" or +"/index.html".
-	// if path.Ext(reqPath) != "" {
-	// 	goto notFound
-	// }
+	if path.Ext(reqPath) != "" {
+		goto notFound
+	}
 
 	// Try +".html".
 	{
@@ -103,7 +113,7 @@ func (self FileServer) ServeHTTP(rew http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	// notFound:
+notFound:
 	// Minor issue: sends code 200 instead of 404 if "404.html" is found; not
 	// worth fixing for local development.
 	http.ServeFile(rew, req, fpj(dir, "404.html"))
