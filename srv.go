@@ -70,23 +70,13 @@ func (self FileServer) ServeHTTP(rew http.ResponseWriter, req *http.Request) {
 	}
 
 	if fileExists(zipFile) {
-		zipReader, err := zip.OpenReader(zipFile)
-		if err != nil {
-			panic(err)
-		}
-		defer zipReader.Close()
-
-		req.URL.Path = inZipFile
-
-		file, err := zipReader.Open(inZipFile)
+		err := self.ServeZipFile(rew, req, zipFile, inZipFile)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				goto notFound
 			}
 			panic(err)
 		}
-		rew.Header().Set(`Content-Type`, mime.TypeByExtension(filepath.Ext(inZipFile)))
-		io.Copy(rew, file)
 		return
 	}
 
@@ -119,6 +109,24 @@ notFound:
 	http.ServeFile(rew, req, fpj(dir, "404.html"))
 }
 
+func (FileServer) ServeZipFile(rew http.ResponseWriter, req *http.Request, zipFile string, inZipFile string) error {
+	zipReader, err := zip.OpenReader(zipFile)
+	if err != nil {
+		return err
+	}
+	defer zipReader.Close()
+
+	req.URL.Path = inZipFile
+
+	file, err := zipReader.Open(inZipFile)
+	if err != nil {
+		return err
+	}
+	rew.Header().Set(`Content-Type`, mime.TypeByExtension(filepath.Ext(inZipFile)))
+	io.Copy(rew, file)
+	return nil
+}
+
 func fpj(path ...string) string { return filepath.Join(path...) }
 
 func fileExists(filePath string) bool {
@@ -128,8 +136,8 @@ func fileExists(filePath string) bool {
 
 func splitFilePathWithExt(val string, ext string) (arch string, file string) {
 	vals := strings.Split(val, string(os.PathSeparator))
-	for ind, name := range vals {
-		if filepath.Ext(name) == ext {
+	for ind, val := range vals {
+		if filepath.Ext(val) == ext {
 			arch = filepath.Join(vals[:ind+1]...)
 			file = filepath.Join(vals[ind+1:]...)
 			break
