@@ -53,7 +53,6 @@ func (self FileServer) ServeHTTP(rew http.ResponseWriter, req *http.Request) {
 	dir := string(self)
 	reqPath := req.URL.Path
 	filePath := fpj(dir, reqPath)
-	zipFile, inZipFile := splitFilePathWithExt(filePath, ZIP_EXT)
 
 	/**
 	Ends with slash? Return error 404 for hygiene. Directory links must not end
@@ -69,10 +68,11 @@ func (self FileServer) ServeHTTP(rew http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	zipFile, inZipFile := splitFilePathWithExt(filePath, ZIP_EXT)
 	if fileExists(zipFile) {
 		err := self.ServeZipFile(rew, req, zipFile, inZipFile)
 		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
+			if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
 				goto notFound
 			}
 			panic(err)
@@ -134,8 +134,20 @@ func fileExists(filePath string) bool {
 	return stat != nil && !stat.IsDir()
 }
 
+/*
+Splits a given file path into two parts: the archive part and the file part. The arch
+variable holds the part of the path up to and including the first occurrence of the
+provided extension. The file variable holds the remainder of the path after the
+provided extension.
+
+	splitFilePathWithExt(`/report/archive.zip/public/index.html`, `zip`)
+
+	Returns:
+		arch := `/report/archive.zip`
+		file := `/public/index.html`
+*/
 func splitFilePathWithExt(val string, ext string) (arch string, file string) {
-	vals := strings.Split(val, string(os.PathSeparator))
+	vals := strings.Split(val, string(filepath.Separator))
 	for ind, val := range vals {
 		if filepath.Ext(val) == ext {
 			arch = filepath.Join(vals[:ind+1]...)
