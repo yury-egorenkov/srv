@@ -16,7 +16,6 @@ import (
 	"mime"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 )
@@ -30,7 +29,15 @@ Serves static files, resolving URL/HTML in a fashion similar to the default
 Nginx config, Github Pages, and Netlify. Implements `http.Handler`. Can be used
 as an almost drop-in replacement for `http.FileServer`.
 */
-type FileServer string
+type FileServer struct {
+	Dir      string
+	Handlers []FileServable
+}
+
+func (self *FileServer) AppendHandler(handler FileServable) FileServer {
+	self.Handlers = append(self.Handlers, handler)
+	return *self
+}
 
 /*
 Implements `http.Hander`.
@@ -50,7 +57,7 @@ func (self FileServer) ServeHTTP(rew http.ResponseWriter, req *http.Request) {
 	case http.MethodGet:
 	}
 
-	dir := string(self)
+	dir := string(self.Dir)
 	reqPath := req.URL.Path
 	filePath := fpj(dir, reqPath)
 
@@ -63,68 +70,102 @@ func (self FileServer) ServeHTTP(rew http.ResponseWriter, req *http.Request) {
 	// 	goto notFound
 	// }
 
-	if fileExists(filePath) {
-		http.ServeFile(rew, req, filePath)
-		return
-	}
+	hans := append([]FileServable{PlainFileServer(self.Dir)}, self.Handlers...)
+	for _, han := range hans {
+		if han.FileExists(filePath) {
+			han.ServeFile(rew, req, filePath)
+			return
+		}
 
-	zipFile, inZipFile := splitFilePathWithExt(filePath, ZIP_EXT)
-	if fileExists(zipFile) {
-		err := self.ServeZipFile(rew, req, zipFile, inZipFile)
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
-				goto notFound
+		// Has extension? Don't bother looking for +".html" or +"/index.html".
+		// if path.Ext(reqPath) != "" {
+		// 	NotFoundFileServer(self.Dir).ServeFile(rew, req, filePath)
+		// 	return
+		// }
+
+		// Try +".html".
+		{
+			candidatePath := filePath + ".html"
+			if han.FileExists(candidatePath) {
+				han.ServeFile(rew, req, candidatePath)
+				return
 			}
-			panic(err)
 		}
-		return
-	}
 
-	// Has extension? Don't bother looking for +".html" or +"/index.html".
-	if path.Ext(reqPath) != "" {
-		goto notFound
-	}
-
-	// Try +".html".
-	{
-		candidatePath := filePath + ".html"
-		if fileExists(candidatePath) {
-			http.ServeFile(rew, req, candidatePath)
-			return
+		// Try +"/index.html".
+		{
+			candidatePath := fpj(filePath, "index.html")
+			if han.FileExists(candidatePath) {
+				han.ServeFile(rew, req, candidatePath)
+				return
+			}
 		}
 	}
-
-	// Try +"/index.html".
-	{
-		candidatePath := fpj(filePath, "index.html")
-		if fileExists(candidatePath) {
-			http.ServeFile(rew, req, candidatePath)
-			return
-		}
-	}
-
-notFound:
-	// Minor issue: sends code 200 instead of 404 if "404.html" is found; not
-	// worth fixing for local development.
-	http.ServeFile(rew, req, fpj(dir, "404.html"))
 }
 
-func (FileServer) ServeZipFile(rew http.ResponseWriter, req *http.Request, zipFile string, inZipFile string) error {
-	zipReader, err := zip.OpenReader(zipFile)
+type FileServable interface {
+	FileExists(filePath string) bool
+	ServeFile(rew http.ResponseWriter, req *http.Request, filePath string)
+}
+
+type NotFoundFileServer PlainFileServer
+
+func (self NotFoundFileServer) filePath() string {
+	return fpj(string(self), "404.html")
+}
+
+func (self NotFoundFileServer) FileExists(_ string) bool {
+	return fileExists(self.filePath())
+}
+
+// Minor issue: sends code 200 instead of 404 if "404.html" is found; not
+// worth fixing for local development.
+func (self NotFoundFileServer) ServeFile(rew http.ResponseWriter, req *http.Request, _ string) {
+	http.ServeFile(rew, req, self.filePath())
+}
+
+type PlainFileServer string
+
+func (PlainFileServer) FileExists(filePath string) bool {
+	return fileExists(filePath)
+}
+
+func (self PlainFileServer) ServeFile(rew http.ResponseWriter, req *http.Request, filePath string) {
+	http.ServeFile(rew, req, filePath)
+}
+
+type ZipFileServer string
+
+func (self ZipFileServer) FileExists(filePath string) bool {
+	filePath, _ = splitFilePathWithExt(filePath, ZIP_EXT)
+	return fileExists(filePath)
+}
+
+func (self ZipFileServer) ServeFile(rew http.ResponseWriter, req *http.Request, filePath string) {
+	zipFilePath, inZipFilePath := splitFilePathWithExt(filePath, ZIP_EXT)
+
+	zipReader, err := zip.OpenReader(zipFilePath)
 	if err != nil {
-		return err
+		if errNotExistOrPanic(err) {
+			NotFoundFileServer(self).ServeFile(rew, req, filePath)
+			return
+		}
 	}
 	defer zipReader.Close()
 
-	req.URL.Path = inZipFile
+	req.URL.Path = inZipFilePath
 
-	file, err := zipReader.Open(inZipFile)
+	file, err := zipReader.Open(inZipFilePath)
 	if err != nil {
-		return err
+		if errNotExistOrPanic(err) {
+			NotFoundFileServer(self).ServeFile(rew, req, filePath)
+			return
+		}
 	}
-	rew.Header().Set(`Content-Type`, mime.TypeByExtension(filepath.Ext(inZipFile)))
+
+	rew.Header().Set(`Content-Type`, mime.TypeByExtension(filepath.Ext(inZipFilePath)))
 	io.Copy(rew, file)
-	return nil
+	return
 }
 
 func fpj(path ...string) string { return filepath.Join(path...) }
@@ -156,4 +197,11 @@ func splitFilePathWithExt(val string, ext string) (arch string, file string) {
 		}
 	}
 	return
+}
+
+func errNotExistOrPanic(err error) bool {
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
+		return false
+	}
+	panic(err)
 }

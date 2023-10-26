@@ -23,7 +23,7 @@ Usage:
 	srv -p <port>
 	srv -h <host>
 	srv -c
-	srv -zip
+	srv -z         # Serve zip files as folders.
 
 Settings:
 
@@ -41,6 +41,7 @@ var conf = struct {
 type Server struct {
 	Dir  string
 	Cors bool
+	Zip  bool
 }
 
 var logger = log.New(os.Stderr, "", 0)
@@ -50,6 +51,7 @@ func main() {
 	flag.IntVar(&conf.Port, "p", conf.Port, "port")
 	flag.StringVar(&conf.Host, "h", conf.Host, "host")
 	flag.BoolVar(&conf.Cors, "c", conf.Cors, "cors")
+	flag.BoolVar(&conf.Zip, "z", conf.Zip, "zip")
 
 	flag.Usage = func() {
 		fmt.Fprint(flag.CommandLine.Output(), help)
@@ -101,7 +103,14 @@ func (self Server) ServeHTTP(rew http.ResponseWriter, req *http.Request) {
 	if self.Cors {
 		allowCors(rew.Header())
 	}
-	srv.FileServer(self.Dir).ServeHTTP(rew, req)
+
+	fs := srv.FileServer{Dir: self.Dir}
+
+	if self.Zip {
+		fs.AppendHandler(srv.ZipFileServer(self.Dir))
+	}
+
+	fs.ServeHTTP(rew, req)
 }
 
 func allowCors(header http.Header) {
