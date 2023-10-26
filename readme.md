@@ -4,7 +4,12 @@ Extremely simple Go tool that serves files out of a given folder, using a file r
 
 ## Why
 
-Useful when making a site that will be served by GitHub Pages or similar. Usable from Go code. Usable from a shell. Not overweight.
+Useful when making a site that will be served by GitHub Pages or similar.
+
+* Usable from Go code.
+* Usable from a shell.
+* Not overweight.
+* Can serve files from `zip` archives without nesseserity of unpacking.
 
 ## Usage
 
@@ -46,6 +51,7 @@ Alternatively, you can run the executable using the full path. At the time of wr
 * For directories including `/`, use `index.html` when available.
 * For "clean" links without an extension, try appending `.html`.
 * For "not found", try using `404.html` if one exists, falling back on a simple hardcoded message.
+* For `zip` archive download if no `/`. If `arch.zip/index.html` it serves `html` and works as it regular folder.
 
 ## License
 
